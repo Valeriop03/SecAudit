@@ -6,7 +6,9 @@ via HTTP headers, cookies, HTML patterns, and common file paths.
 
 from __future__ import annotations
 
+import random
 import re
+import string
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -149,12 +151,30 @@ class TechFingerprintModule(BaseModule):
     name = "tech_fingerprint"
     description = "Identifies the technology stack and probes for sensitive exposed paths"
 
-    def _fetch(self, url: str) -> requests.Response | None:
+    def _detect_catch_all(self, base_url: str) -> tuple[int, int] | None:
+        """
+        Detect soft-404 / catch-all behaviour by requesting two random paths of equal
+        length. If both return the same status code and content length the server is
+        serving a catch-all page (e.g. login redirect, custom 404 that returns 200).
+        Returns a (status_code, content_length) fingerprint to filter out false positives,
+        or None if the server behaves normally.
+        """
+        rand1 = "/secaudit-" + "".join(random.choices(string.ascii_lowercase, k=12))
+        rand2 = "/secaudit-" + "".join(random.choices(string.ascii_lowercase, k=12))
+        r1 = self._fetch(f"{base_url}{rand1}", allow_redirects=False)
+        r2 = self._fetch(f"{base_url}{rand2}", allow_redirects=False)
+        if (r1 and r2
+                and r1.status_code == r2.status_code
+                and len(r1.content) == len(r2.content)):
+            return (r1.status_code, len(r1.content))
+        return None
+
+    def _fetch(self, url: str, allow_redirects: bool = True) -> requests.Response | None:
         try:
             return requests.get(
                 url,
                 timeout=self.timeout,
-                allow_redirects=True,
+                allow_redirects=allow_redirects,
                 headers={"User-Agent": "SecAudit/1.0 Security Scanner"},
                 verify=False,
             )
@@ -220,12 +240,15 @@ class TechFingerprintModule(BaseModule):
                 ),
             ))
 
-        # Probe sensitive paths
+        # Probe sensitive paths — detect catch-all/soft-404 first to avoid false positives
+        catch_all = self._detect_catch_all(target.base_url)
         sensitive_found = []
         for path, description in PROBE_PATHS:
             url = f"{target.base_url}{path}"
-            resp = self._fetch(url)
+            resp = self._fetch(url, allow_redirects=False)
             if resp and resp.status_code in (200, 403):
+                if catch_all and (resp.status_code, len(resp.content)) == catch_all:
+                    continue
                 sensitive_found.append((path, description, resp.status_code))
 
         for path, description, status in sensitive_found:
