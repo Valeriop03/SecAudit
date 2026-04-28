@@ -25,8 +25,8 @@ Reports are generated as **HTML** (dark theme, styled) or **JSON** for integrati
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/secaudit-toolkit.git
-cd secaudit-toolkit
+git clone https://github.com/Valeriop03/SecAudit.git
+cd secaudit
 pip install -e ".[dev]"
 ```
 
